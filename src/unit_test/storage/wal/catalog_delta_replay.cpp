@@ -55,9 +55,9 @@ using namespace infinity;
 
 class CatalogDeltaReplayTest : public BaseTest {
 protected:
-    void SetUp() override { system("rm -rf /tmp/infinity"); }
+    void SetUp() override { system("rm -rf /var/infinity"); }
 
-    void TearDown() override { system("rm -rf /tmp/infinity"); }
+    void TearDown() override { system("rm -rf /var/infinity"); }
 
     void WaitFlushDeltaOp(TxnManager *txn_mgr, TxnTimeStamp last_commit_ts) {
         // TxnTimeStamp visible_ts = 0;
@@ -856,7 +856,7 @@ TEST_F(CatalogDeltaReplayTest, replay_table_single_index) {
 
         String idx_name = "test_full_idx";
         const String idx_file_name = "test_full_idx.json";
-        String analyzer{};
+        String analyzer{"standard"};
         Vector<String> col_name_list{"col1"};
 
         {
@@ -1022,7 +1022,7 @@ TEST_F(CatalogDeltaReplayTest, replay_table_single_index_named_db) {
 
         String idx_name = "test_full_idx";
         const String idx_file_name = "test_full_idx.json";
-        String analyzer{};
+        String analyzer{"standard"};
         Vector<String> col_name_list{"col1"};
 
         {
@@ -1172,7 +1172,7 @@ TEST_F(CatalogDeltaReplayTest, replay_table_single_index_and_compact) {
 
         String idx_name = "test_full_idx";
         const String idx_file_name = "test_full_idx.json";
-        String analyzer{};
+        String analyzer{"standard"};
         Vector<String> col_name_list{"col1"};
 
         {
