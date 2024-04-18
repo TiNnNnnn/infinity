@@ -131,8 +131,11 @@ class HttpTest:
         r = self.request(url, "get")
         assert r.status_code == 200
         # return all db names
+        r_json = r.json()
         ret = []
-        dblist = (r.json())["databases"]
+        if r_json.get("databases", None) is None:
+            return ret 
+        dblist = r_json["databases"]
         for item in dblist:
             ret.append(item)
         return ret
@@ -187,8 +190,11 @@ class HttpTest:
         h = self.set_up_header(['accept'])
         r = self.request(url, "get", h)
         # return all db names
+        r_json = r.json()
         ret = []
-        table_list = (r.json())["tables"]
+        if r_json.get("tables", None) is None:
+            return ret 
+        table_list = r_json["tables"]
         for item in table_list:
             ret.append(item)
         return ret
@@ -245,7 +251,7 @@ class HttpTest:
         self.tear_down(r, expect)
         r_json = r.json()
         index_list = []
-        exists = expect.get("tables", None)
+        exists = r_json.get("tables", None)
         if exists is not None:
             for t in r_json["tables"]:
                 index_list.append(t)
