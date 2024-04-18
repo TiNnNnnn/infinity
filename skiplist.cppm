@@ -43,20 +43,6 @@ std::pair<uint32_t, uint32_t> decodeVal(uint64_t value) {
     return {valOffset, valSize};
 }
 
-struct MemNode {
-    const char *addr_;
-    uint64_t len_;
-};
-
-export struct KeyComparator {
-public:
-    // int operator()(const MemNode &lhs, const MemNode &rhs) const {
-    //     // return memcmp(lhs.addr_,rhs.addr_,std::min(lhs.len_,rhs.len_));
-    //     return strcmp(lhs.addr_, rhs.addr_);
-    // }
-    int operator()(const char *lhs, const char *rhs) const { return strcmp(lhs, rhs); }
-};
-
 export template <typename KeyType, typename ValueType>
 class SkipListNode {
 public:
@@ -72,9 +58,7 @@ public:
 
     void setValue(uint64_t valueoffset) { std::atomic_store_explicit(&value_, valueoffset, std::memory_order_relaxed); }
 
-    // const KeyType key(Arena<KeyType, ValueType> *arena) { return arena->getKey(keyOffset_, keySize_); }
-    // const MemNode key(Arena<KeyType, ValueType> *arena) { return arena->getKey(keyOffset_, keySize_); }
-    const char *key(Arena<KeyType, ValueType> *arena) { return arena->getKey(keyOffset_, keySize_); }
+    const KeyType key(Arena<KeyType, ValueType> *arena) { return arena->getKey(keyOffset_, keySize_); }
 
     uint32_t getNextOffset(int h) { return next_[h].load(std::memory_order_relaxed); }
 
@@ -88,7 +72,7 @@ public:
     std::atomic<uint32_t> next_[MAX_LEVEL];
 };
 
-export template <typename KeyType, typename ValueType, typename Comparator = KeyComparator>
+export template <typename KeyType, typename ValueType, typename Comparator>
 class SkipList {
     typedef SkipListNode<KeyType, ValueType> Node;
 
@@ -176,15 +160,7 @@ public:
         }
 
         auto nextKey = arena_->getKey(n->keyOffset_, n->keySize_);
-        // MemNode k = {key.data(), key.size()};
-
-        const char *mk = nullptr;
-        if constexpr (std::is_same_v<KeyType, String>) {
-            mk = key.data();
-        } else {
-            mk = &key;
-        }
-        if (0 != comparator_(mk, nextKey)) {
+        if (0 != comparator_(key, nextKey)) {
             return false;
         }
 
@@ -216,6 +192,7 @@ public:
             }
             return *this;
         }
+
         bool Valid() { return current_ != nullptr; }
 
     private:
@@ -243,22 +220,17 @@ public:
 
 private:
     Node *newNode(KeyType key, ValueType value, int h) {
-        auto nodeOffset = arena_->addNode(h);
 
+        MemNode k = {&key,sizeof(key)};
+        MemNode v = {value,sizeof(value)};
+
+        auto nodeOffset = arena_->addNode(h);
         auto keyOffset = arena_->addKey(key);
         auto val = encodeValue(arena_->addVal(value), sizeof(value));
 
         Node *node = arena_->getNode(nodeOffset);
         node->keyOffset_ = keyOffset;
-
-        // if constexpr (std::is_same_v<KeyType, String>) {
-        //     node->keySize_ = uint16_t(key.size());
-        // } else {
-        //     node->keySize_ = uint16_t(sizeof(key));
-        // }
-        node->keySize_ = uint16_t(sizeof(key) + 1);
-
-        // node->keySize_ = uint16_t(sizeof(key));
+        node->keySize_ = uint16_t(sizeof(key));
         node->height_ = uint16_t(h);
         node->value_ = val;
         return node;
@@ -266,7 +238,7 @@ private:
 
     int RandomLevel() {
         int new_level = 1;
-        std::uniform_int_distribution<int> dis(0, INT_MAX);
+        std::uniform_real_distribution<> dis(0, INT_MAX);
         while (dis(gen) < INT_MAX / 3 && new_level < MAX_LEVEL) {
             new_level++;
         }
@@ -279,7 +251,7 @@ private:
 
     int32_t getHeight() { return height_.load(std::memory_order_relaxed); }
 
-    std::pair<Node *, bool> findNear(const KeyType &k, bool less, bool allowEqual) {
+    std::pair<Node *, bool> findNear(const KeyType &key, bool less, bool allowEqual) {
         auto x = getHead();
         auto level = int(getHeight() - 1);
 
@@ -301,16 +273,7 @@ private:
             }
 
             auto nextkey = next->key(arena_);
-            // MemNode mk = {k.data(), k.size()};
-            // auto mk = k.data();
-            const char *mk = nullptr;
-            if constexpr (std::is_same_v<KeyType, String>) {
-                mk = k.data();
-            } else {
-                mk = &k;
-            }
-            int cmp = comparator_(mk, nextkey);
-
+            bool cmp = comparator_(key, nextkey);
             if (cmp > 0) {
                 x = next;
                 continue;
@@ -347,7 +310,7 @@ private:
         }
     }
 
-    std::pair<uint32_t, uint32_t> findSpliceForLevel(const KeyType &k, uint32_t before, int level) {
+    std::pair<uint32_t, uint32_t> findSpliceForLevel(const KeyType &key, uint32_t before, int level) {
         while (1) {
             auto beforeNode = arena_->getNode(before);
             auto nextOffset = beforeNode->getNextOffset(level);
@@ -357,15 +320,8 @@ private:
                 return std::make_pair(before, nextOffset);
             }
 
-            auto nextKey = nextNode->key(arena_);
-
-            const char *mk = nullptr;
-            if constexpr (std::is_same_v<KeyType, String>) {
-                mk = k.data();
-            } else {
-                mk = &k;
-            }
-            int cmp = comparator_(mk, nextKey);
+            KeyType nextKey = nextNode->key(arena_);
+            auto cmp = comparator_(key, nextKey);
 
             if (cmp == 0) {
                 return std::make_pair(nextOffset, nextOffset);
@@ -404,16 +360,18 @@ private:
             return;
     }
 
-protected:
-    Arena<KeyType, ValueType> *arena_;
-
 private:
     Comparator const comparator_;
-
+    Arena<KeyType, ValueType> *arena_;
     // cur_height
     std::atomic<int32_t> height_;
     std::atomic<uint32_t> headOffset_;
     std::atomic<int32_t> ref_;
+
+    struct MemNode {
+        uint64_t addr_;
+        uint64_t len_;
+    }
 };
 
 static const uint32_t OFFSET_SIZE = sizeof(uint32_t(0));
@@ -451,49 +409,17 @@ public:
 
     uint32_t addVal(const ValueType &v) {
         uint32_t l = sizeof(v);
-        uint32_t offset = allocate(l + 1);
-
-        // std::memcpy(&buf_[offset], &v, l);
-        // return offset;
-        if constexpr (std::is_same_v<KeyType, String>) {
-            std::memcpy(&buf_[offset], v.data(), v.size());
-            buf_[offset + v.size() + 1] = '\0';
-        } else {
-            std::memcpy(&buf_[offset], &v, l);
-            buf_[offset + l + 1] = '\0';
-        }
+        uint32_t offset = allocate(l);
+        std::memcpy(&buf_[offset], &v, l);
         return offset;
     }
 
     uint32_t addKey(const KeyType &key) {
-        u32 offset = 0;
-        u32 l = sizeof(key);
-        offset = allocate(l + 1);
-        if constexpr (std::is_same_v<KeyType, String>) {
-            std::memcpy(&buf_[offset], key.data(), key.size());
-            buf_[offset + key.size() + 1] = '\0';
-        } else {
-            std::memcpy(&buf_[offset], &key, l);
-            buf_[offset + l + 1] = '\0';
-        }
+        uint32_t l = sizeof(key);
+        uint32_t offset = allocate(l);
+        std::memcpy(&buf_[offset], &key, l);
         return offset;
     }
-
-    // uint32_t addKey(const KeyType &key) {
-    //     u32 offset = 0;
-    //     if constexpr (std::is_same_v<KeyType, String>) {
-    //         u32 l = key.size();
-    //         offset = allocate(l + 1);
-    //         std::memcpy(&buf_[offset], key.data(), l);
-    //         buf_[offset + l + 1] = '\0';
-    //     } else {
-    //         u32 l = sizeof(key);
-    //         offset = allocate(l + 1);
-    //         std::memcpy(&buf_[offset], &key, l);
-    //         buf_[offset + l + 1] = '\0';
-    //     }
-    //     return offset;
-    // }
 
     Node *getNode(uint32_t offset) {
         if (offset == 0) {
@@ -509,32 +435,28 @@ public:
         return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(node) - reinterpret_cast<uintptr_t>(&buf_[0]));
     }
 
-    int64_t arenaSize() const { return static_cast<int64_t>(n_.load()); }
-
-    // MemNode getKey(uint32_t offset, uint16_t size) {
-    //     // 确保 offset 和 size 合法
-    //     MemNode key;
-    //     if (offset + size > arenaSize()) {
-    //         return key;
-    //     }
-    //     key.addr_ = reinterpret_cast<const char *>(&buf_[offset]);
-    //     return key;
-    // }
-
-    const char *getKey(uint32_t offset, uint16_t size) {
+    KeyType getKey(uint32_t offset, uint16_t size) {
         // 确保 offset 和 size 合法
-        if (offset + size > arenaSize()) {
-            return nullptr;
+        if (offset + size > buf_.size()) {
+            return KeyType{};
         }
-        return reinterpret_cast<const char *>(&buf_[offset]);
+        if constexpr (std::is_same_v<KeyType, String>) {
+            // return static_cast<KeyType>((&buf_[offset]));
+            return String(std::string_view(&buf_[offset], size));
+        } else {
+            KeyType key;
+            std::memcpy(&key, &buf_[offset], size);
+            return key;
+        }
     }
 
     ValueType getVal(uint32_t offset, uint32_t size) {
-        if (offset + size > arenaSize()) {
+        if (offset + size > buf_.size()) {
             return ValueType{};
         }
         if constexpr (std::is_same_v<ValueType, String>) {
-            return String(buf_.begin() + offset, buf_.begin() + offset + size);
+            return String(std::string_view(&buf_[offset], size));
+            // return static_cast<ValueType>((&buf_[offset]));
         } else {
             ValueType val;
             std::memcpy(&val, &buf_[offset], size);
@@ -542,23 +464,17 @@ public:
         }
     }
 
+    int64_t size() const { return static_cast<int64_t>(n_.load()); }
+
     void clear() {
         n_ = 0;
         buf_.resize(0);
     }
-
-    char Buf(int idx) {
-        if (int64_t(idx) > arenaSize()) {
-            return ' ';
-        }
-        return buf_[idx];
-    }
-
+    //~Arena() { clear(); }
 private:
     std::atomic<uint32_t> n_;
     Vector<char> buf_;
 };
-
 } // namespace infinity
 
 // module;
